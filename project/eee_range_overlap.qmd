@@ -1,0 +1,180 @@
+---
+title: "vector overlap"
+format: html
+editor: visual
+---
+
+```{r}
+library(here)
+
+library(sf)
+library(daymetr)
+library(tigris)
+library(tmap)
+library(geometry)
+library(FedData)
+library(tidyverse)
+```
+
+```{r}
+mosqDF <- read_rds(file = here("mosq.rds"))
+
+mela_dat <- read_rds(file = here("project", "daymet_mel.RDS"))
+pert_dat <- read_rds(file = here("project", "daymet_pert.RDS"))
+```
+
+
+```{r}
+perturbans <- 
+  mosqDF %>%
+  filter(str_detect(species, "perturbans"),
+         sample_value > 0) %>%
+  mutate(yday = day(ymd(sample_start_date))) %>%
+  dplyr::select(sample_location, sample_value, species, yday, sample_lat_dd, sample_long_dd)
+
+melanura <-
+  mosqDF %>%
+  filter(str_detect(species, "melanura"),
+         sample_value > 0) %>%
+  mutate(yday = day(ymd(sample_start_date))) %>%
+  dplyr::select(sample_location, sample_value, species, yday, sample_lat_dd, sample_long_dd)
+```
+
+
+```{r}
+pert_locs <- perturbans %>%
+  distinct(sample_location, sample_lat_dd, sample_long_dd) %>%
+  mutate(sample_location = paste(sample_location, row_number(), sep = "_")) %>%
+  st_as_sf(coords = c("sample_long_dd", "sample_lat_dd"),
+           crs = 4269) %>%
+  mutate(species = "perturbans")
+
+mela_locs <- melanura %>%
+  distinct(sample_location, sample_lat_dd, sample_long_dd) %>%
+  mutate(sample_location = paste(sample_location, row_number(), sep = "_")) %>%
+  st_as_sf(coords = c("sample_long_dd", "sample_lat_dd"),
+           crs = 4269) %>%
+  mutate(species = "melanura")
+
+```
+
+
+#Get environmental covariates
+
+```{r}
+va_sf <-
+  counties(state = "VA", cb = TRUE)
+
+suff <-
+  va_sf %>%
+  filter(NAME == "Suffolk")
+
+st_crs(suff) == st_crs(mela_locs)
+```
+
+
+
+```{r}
+tm_shape(suff) +
+  tm_borders() +
+  tm_shape(mela_locs) +
+  tm_dots(fill= "red") +
+  tm_shape(pert_locs) +
+  tm_dots(fill= "blue", fill_alpha = 0.5)
+```
+
+
+```{r}
+mela_train <-
+  melanura %>%
+  rename(lat = sample_lat_dd,
+         long = sample_long_dd) %>%
+  left_join(mela_dat)
+
+pert_train <-
+  perturbans %>%
+  rename(lat = sample_lat_dd,
+         long = sample_long_dd) %>%
+  left_join(pert_dat)
+
+```
+
+
+
+
+# Implement Range Bagging
+
+```{r}
+source(here("project", "rb.R"))
+```
+
+
+```{r}
+mela_mod_df <-
+  mela_train %>%
+  dplyr::select(min_temp, max_temp, avg_temp, precip, vapor)
+
+pert_mod_df <-
+  pert_train %>%
+  dplyr::select(min_temp, max_temp, avg_temp, precip, vapor)
+```
+
+
+```{r, eval = F}
+mela_train <-
+  slice_sample(mela_dat, n = 90)
+
+mela_test <-
+  mela_dat %>%
+  filter(!ID %in% mela_train$ID)
+
+pert_train <-
+  slice_sample(pert_dat, n = 90)
+
+pert_test <-
+  pert_dat %>%
+  filter(!ID %in% pert_train$ID)
+```
+
+
+```{r}
+pred_locs <-
+  expand.grid(min_temp = seq(min(mela_train$min_temp), 
+                             max(mela_train$min_temp), 
+                             length.out = 10),
+              max_temp = seq(min(mela_train$max_temp), 
+                             max(mela_train$max_temp), 
+                             length.out = 10),
+              avg_temp = seq(min(mela_train$avg_temp), 
+                             max(mela_train$avg_temp), 
+                             length.out = 10),
+              precip = seq(min(mela_train$precip), 
+                           max(mela_train$precip), 
+                           length.out = 10),
+              vapor = seq(min(mela_train$vapor),
+                          max(mela_train$vapor),
+                          length.out = 10))
+
+pred_dat <-
+  pred_locs %>%
+  slice_sample(prop = 0.2)
+```
+
+
+```{r}
+mela_rb <- rb(mela_mod_df, v = 250, d = 1, p = 0.75)
+
+pert_rb <- rb(pert_mod_df, v = 250, d = 1, p = 0.75)
+```
+
+```{r}
+
+mela_preds <- rb.test(mela_rb, pred_dat)
+
+pert_preds <- rb.test(pert_rb, pred_dat)
+
+```
+
+
+
+Grab worldclim data for Virginia!
