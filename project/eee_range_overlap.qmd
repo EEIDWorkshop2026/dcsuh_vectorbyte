@@ -23,6 +23,33 @@ mela_dat <- read_rds(file = here("project", "daymet_mel.RDS"))
 pert_dat <- read_rds(file = here("project", "daymet_pert.RDS"))
 ```
 
+```{r}
+daymet_suff <- read_rds(file = here("project", "daymet_suff.RDS"))
+
+```
+
+
+Grab worldclim data for Virginia!
+
+```{r, eval = F}
+wc_stack <-
+  rast(c("/Volumes/suh_sd_1tb/data/worldclim/wc2.1_30s_bio/wc2.1_30s_bio_1.tif",
+             "/Volumes/suh_sd_1tb/data/worldclim/wc2.1_30s_bio/wc2.1_30s_bio_2.tif",
+             "/Volumes/suh_sd_1tb/data/worldclim/wc2.1_30s_bio/wc2.1_30s_bio_4.tif",
+             "/Volumes/suh_sd_1tb/data/worldclim/wc2.1_30s_bio/wc2.1_30s_bio_12.tif",
+             "/Volumes/suh_sd_1tb/data/worldclim/wc2.1_30s_bio/wc2.1_30s_bio_15.tif"))
+
+wc_va <-
+  crop(wc_stack, va_sf)
+
+writeRaster(wc_va, filename = "/Users/danielsuh/Desktop/va_worlclim.tif")
+```
+
+```{r}
+wc_va <- rast("/Users/danielsuh/Desktop/va_worlclim.tif")
+```
+
+
 
 ```{r}
 perturbans <- 
@@ -46,30 +73,78 @@ pert_locs <- perturbans %>%
   distinct(sample_location, sample_lat_dd, sample_long_dd) %>%
   mutate(sample_location = paste(sample_location, row_number(), sep = "_")) %>%
   st_as_sf(coords = c("sample_long_dd", "sample_lat_dd"),
-           crs = 4269) %>%
+           crs = 4326) %>%
   mutate(species = "perturbans")
 
 mela_locs <- melanura %>%
   distinct(sample_location, sample_lat_dd, sample_long_dd) %>%
   mutate(sample_location = paste(sample_location, row_number(), sep = "_")) %>%
   st_as_sf(coords = c("sample_long_dd", "sample_lat_dd"),
-           crs = 4269) %>%
+           crs = 4326) %>%
   mutate(species = "melanura")
 
 ```
 
+```{r}
+perturbans_sf <-
+  perturbans %>%
+  mutate(sample_location = paste(sample_location, row_number(), sep = "_")) %>%
+  st_as_sf(coords = c("sample_long_dd", "sample_lat_dd"),
+           crs = 4326) %>%
+  mutate(species = "perturbans")
+
+melanura_sf <-
+  melanura %>%
+  mutate(sample_location = paste(sample_location, row_number(), sep = "_")) %>%
+  st_as_sf(coords = c("sample_long_dd", "sample_lat_dd"),
+           crs = 4326) %>%
+  mutate(species = "melanura")
+```
+
+
 
 #Get environmental covariates
 
+
+
+
+
+```{r}
+pert_vals <-
+  terra::extract(wc_va, perturbans_sf) %>%
+  dplyr::select(2:6) %>%
+  distinct() %>%
+  rename_with(~ str_replace_all(.x, "wc2.1_30s_", "")) %>%
+  mutate(bio_4 = bio_4/10,
+         bio_12 = bio_12/100)
+
+mela_vals <- 
+  terra::extract(wc_va, melanura_sf) %>%
+  dplyr::select(2:6) %>%
+  distinct() %>%
+  rename_with(~ str_replace_all(.x, "wc2.1_30s_", "")) %>%
+  mutate(bio_4 = bio_4/10,
+         bio_12 = bio_12/100)
+```
+
+
+
 ```{r}
 va_sf <-
-  counties(state = "VA", cb = TRUE)
+  counties(state = "VA", cb = TRUE) %>%
+  st_transform(., crs = 4326)
 
 suff <-
   va_sf %>%
-  filter(NAME == "Suffolk")
+  filter(NAME %in% c("Suffolk", "Isle of Wight", "Chesapeake"))
 
 st_crs(suff) == st_crs(mela_locs)
+```
+
+
+```{r}
+wc_suff <-
+  crop(wc_va, suff)
 ```
 
 
@@ -162,19 +237,85 @@ pred_dat <-
 
 
 ```{r}
-mela_rb <- rb(mela_mod_df, v = 250, d = 1, p = 0.75)
+mela_rb <- rb(mela_vals, v = 250, d = 1, p = 0.75)
 
-pert_rb <- rb(pert_mod_df, v = 250, d = 1, p = 0.75)
+pert_rb <- rb(pert_vals, v = 250, d = 1, p = 0.75)
 ```
 
 ```{r}
+wc_va_df <-
+  as.data.frame(wc_suff, xy = TRUE) %>%
+  rename_with(~ str_replace_all(.x, "wc2.1_30s_", ""))
 
-mela_preds <- rb.test(mela_rb, pred_dat)
+wc_va_covs <-
+  wc_va_df %>%
+  dplyr::select(-c(x,y)) %>%
+  mutate(bio_4 = bio_4/10,
+         bio_12 = bio_12/100)
+```
 
-pert_preds <- rb.test(pert_rb, pred_dat)
+
+```{r}
+mela_preds <- rb.test(mela_rb, wc_va_covs)
+
+pert_preds <- rb.test(pert_rb, wc_va_covs)
+```
+
+```{r}
+wc_va_df$pert_prob <- pert_preds
+
+wc_va_rast <-
+  rast(wc_va_df, type = "xyz")
+```
+
+```{r}
+wc_va_pert_prob <-
+  wc_va_rast[[6]]
+
+
+tm_shape(suff) +
+  tm_borders() +
+  tm_shape(wc_va_rast) +
+  tm_raster() +
+  tm_shape(suff) +
+  tm_borders(lwd = 3) +
+  tm_shape(pert_locs) +
+  tm_dots(fill = "red")
+```
+
+
+
+
+
+
+
+# Make maps
+
+```{r}
+pred_rast_df <-
+  as.data.frame(wc_va, xy = TRUE)
+
 
 ```
 
 
 
-Grab worldclim data for Virginia!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
