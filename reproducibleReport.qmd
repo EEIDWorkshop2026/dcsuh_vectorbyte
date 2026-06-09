@@ -22,7 +22,6 @@ library(kableExtra)
 DL <- FALSE
 ```
 
-
 ```{r, include = F, message = F, eval = DL}
 # We can hide our set up code chunk using the "echo = FALSE" option. 
 # We can make sure no messages pop up by adding "message = FALSE".
@@ -67,7 +66,6 @@ write_rds(mosqDF, file = here("mosq.rds"))
 write_rds(mosqDFcomb, file = here("mosq_comb.rds"))
 ```
 
-
 ```{r, echo = FALSE}
 if(DL == FALSE){
   mosqDF <- read_rds(file = here("mosq.rds"))
@@ -82,8 +80,6 @@ if(DL == FALSE){
 
 mosqDFcomb <- mosqDFcomb %>% filter(year > 2015)
 ```
-
-
 
 ## Background
 
